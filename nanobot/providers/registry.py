@@ -396,6 +396,23 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         strip_model_prefix=False,
         model_overrides=(),
     ),
+
+    ProviderSpec(
+        name="ssopen",
+        keywords=("ssopen",),
+        env_key="SSOPEN_API_KEY",
+        display_name="SSOPEN",
+        litellm_prefix="ssopen",           
+        skip_prefixes=("ssopen/",),
+        env_extras=(),
+        is_gateway=True,
+        is_local=False,
+        detect_by_key_prefix="",
+        detect_by_base_keyword="ssopen",
+        default_api_base="https://api.ssopen.top/v1",
+        strip_model_prefix=False,
+        model_overrides=(),
+    ),
 )
 
 
