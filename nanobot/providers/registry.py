@@ -402,8 +402,8 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         keywords=("ssopen",),
         env_key="SSOPEN_API_KEY",
         display_name="SSOPEN",
-        litellm_prefix="ssopen",           
-        skip_prefixes=("ssopen/",),
+        litellm_prefix="ssopen",        
+        skip_prefixes=(),
         env_extras=(),
         is_gateway=True,
         is_local=False,
@@ -412,6 +412,7 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         default_api_base="https://api.ssopen.top/v1",
         strip_model_prefix=False,
         model_overrides=(),
+        supports_prompt_caching=True,
     ),
 )
 
