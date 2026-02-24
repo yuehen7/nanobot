@@ -431,22 +431,6 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         model_overrides=(),
     ),
 
-    ProviderSpec(
-        name="packycode",
-        keywords=("packycode",),
-        env_key="",
-        display_name="PackyCode",
-        litellm_prefix="openai",        
-        skip_prefixes=(),
-        env_extras=(),
-        is_gateway=True,
-        is_local=False,
-        detect_by_key_prefix="",
-        detect_by_base_keyword="packycode",
-        default_api_base="https://www.packyapi.com/v1",
-        strip_model_prefix=True,
-        model_overrides=(),
-    ),
 )
 
 
