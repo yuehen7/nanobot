@@ -1,11 +1,17 @@
 """Spawn tool for creating background subagents."""
 
 from typing import Any, TYPE_CHECKING
+from contextvars import ContextVar
 
 from nanobot.agent.tools.base import Tool
 
 if TYPE_CHECKING:
     from nanobot.agent.subagent import SubagentManager
+
+# Context variables for thread-safe state management
+_origin_channel_ctx: ContextVar[str] = ContextVar("spawn_tool_channel", default="cli")
+_origin_chat_id_ctx: ContextVar[str] = ContextVar("spawn_tool_chat_id", default="direct")
+_session_key_ctx: ContextVar[str] = ContextVar("spawn_tool_session_key", default="cli:direct")
 
 
 class SpawnTool(Tool):
@@ -13,15 +19,12 @@ class SpawnTool(Tool):
     
     def __init__(self, manager: "SubagentManager"):
         self._manager = manager
-        self._origin_channel = "cli"
-        self._origin_chat_id = "direct"
-        self._session_key = "cli:direct"
     
     def set_context(self, channel: str, chat_id: str) -> None:
         """Set the origin context for subagent announcements."""
-        self._origin_channel = channel
-        self._origin_chat_id = chat_id
-        self._session_key = f"{channel}:{chat_id}"
+        _origin_channel_ctx.set(channel)
+        _origin_chat_id_ctx.set(chat_id)
+        _session_key_ctx.set(f"{channel}:{chat_id}")
     
     @property
     def name(self) -> str:
@@ -57,7 +60,7 @@ class SpawnTool(Tool):
         return await self._manager.spawn(
             task=task,
             label=label,
-            origin_channel=self._origin_channel,
-            origin_chat_id=self._origin_chat_id,
-            session_key=self._session_key,
+            origin_channel=_origin_channel_ctx.get(),
+            origin_chat_id=_origin_chat_id_ctx.get(),
+            session_key=_session_key_ctx.get(),
         )

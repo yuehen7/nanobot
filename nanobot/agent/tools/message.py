@@ -1,9 +1,16 @@
 """Message tool for sending messages to users."""
 
 from typing import Any, Awaitable, Callable
+from contextvars import ContextVar
 
 from nanobot.agent.tools.base import Tool
 from nanobot.bus.events import OutboundMessage
+
+# Context variables for thread-safe state management
+_channel_ctx: ContextVar[str] = ContextVar("message_tool_channel", default="")
+_chat_id_ctx: ContextVar[str] = ContextVar("message_tool_chat_id", default="")
+_message_id_ctx: ContextVar[str | None] = ContextVar("message_tool_message_id", default=None)
+_sent_in_turn_ctx: ContextVar[bool] = ContextVar("message_tool_sent_in_turn", default=False)
 
 
 class MessageTool(Tool):
@@ -17,16 +24,19 @@ class MessageTool(Tool):
         default_message_id: str | None = None,
     ):
         self._send_callback = send_callback
-        self._default_channel = default_channel
-        self._default_chat_id = default_chat_id
-        self._default_message_id = default_message_id
-        self._sent_in_turn: bool = False
+        # Initialize defaults if provided (though context vars are preferred)
+        if default_channel:
+            _channel_ctx.set(default_channel)
+        if default_chat_id:
+            _chat_id_ctx.set(default_chat_id)
+        if default_message_id:
+            _message_id_ctx.set(default_message_id)
 
     def set_context(self, channel: str, chat_id: str, message_id: str | None = None) -> None:
         """Set the current message context."""
-        self._default_channel = channel
-        self._default_chat_id = chat_id
-        self._default_message_id = message_id
+        _channel_ctx.set(channel)
+        _chat_id_ctx.set(chat_id)
+        _message_id_ctx.set(message_id)
 
     def set_send_callback(self, callback: Callable[[OutboundMessage], Awaitable[None]]) -> None:
         """Set the callback for sending messages."""
@@ -34,7 +44,11 @@ class MessageTool(Tool):
 
     def start_turn(self) -> None:
         """Reset per-turn send tracking."""
-        self._sent_in_turn = False
+        _sent_in_turn_ctx.set(False)
+    
+    @property
+    def _sent_in_turn(self) -> bool:
+        return _sent_in_turn_ctx.get()
 
     @property
     def name(self) -> str:
@@ -79,9 +93,9 @@ class MessageTool(Tool):
         media: list[str] | None = None,
         **kwargs: Any
     ) -> str:
-        channel = channel or self._default_channel
-        chat_id = chat_id or self._default_chat_id
-        message_id = message_id or self._default_message_id
+        channel = channel or _channel_ctx.get()
+        chat_id = chat_id or _chat_id_ctx.get()
+        message_id = message_id or _message_id_ctx.get()
 
         if not channel or not chat_id:
             return "Error: No target channel/chat specified"
@@ -101,7 +115,7 @@ class MessageTool(Tool):
 
         try:
             await self._send_callback(msg)
-            self._sent_in_turn = True
+            _sent_in_turn_ctx.set(True)
             media_info = f" with {len(media)} attachments" if media else ""
             return f"Message sent to {channel}:{chat_id}{media_info}"
         except Exception as e:
