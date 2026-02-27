@@ -5,6 +5,8 @@ import json_repair
 import os
 from typing import Any
 
+from loguru import logger
+
 import litellm
 from litellm import acompletion
 
@@ -16,6 +18,12 @@ from nanobot.providers.registry import find_by_model, find_gateway
 # thinking-enabled models (Kimi k2.5, DeepSeek-R1, etc.).
 _ALLOWED_MSG_KEYS = frozenset({"role", "content", "tool_calls", "tool_call_id", "name", "reasoning_content"})
 
+_TRANSIENT_ERRORS = (
+    litellm.Timeout,
+    litellm.ServiceUnavailableError,
+    litellm.InternalServerError,
+    litellm.RateLimitError
+)
 
 class LiteLLMProvider(LLMProvider):
     """
@@ -33,10 +41,14 @@ class LiteLLMProvider(LLMProvider):
         default_model: str = "anthropic/claude-opus-4-5",
         extra_headers: dict[str, str] | None = None,
         provider_name: str | None = None,
+        fallbacks: list[str] | None = None,
+        fallback_providers: dict[str, dict[str, Any]] | None = None,
     ):
         super().__init__(api_key, api_base)
         self.default_model = default_model
         self.extra_headers = extra_headers or {}
+        self._fallbacks = fallbacks or []
+        self._fallback_providers = fallback_providers or {}
         
         # Detect gateway / local deployment.
         # provider_name (from config key) is the primary signal;
@@ -188,6 +200,8 @@ class LiteLLMProvider(LLMProvider):
         original_model = model or self.default_model
         model = self._resolve_model(original_model)
 
+        raw_messages, raw_tools = messages, tools
+
         if self._supports_cache_control(original_model):
             messages, tools = self._apply_cache_control(messages, tools)
 
@@ -224,13 +238,76 @@ class LiteLLMProvider(LLMProvider):
         try:
             response = await acompletion(**kwargs)
             return self._parse_response(response)
+        except _TRANSIENT_ERRORS as e:
+            if not self._fallbacks or not self._fallback_providers:
+                return LLMResponse(
+                    content=f"Error calling default LLM: {str(e)}",
+                    finish_reason="error",
+                )
+            return await self._try_fallbacks(
+                e, raw_messages, raw_tools, max_tokens, temperature,
+            )    
         except Exception as e:
             # Return error as content for graceful handling
             return LLMResponse(
-                content=f"Error calling LLM: {str(e)}",
+                content=f"Error calling default LLM: {str(e)}",
                 finish_reason="error",
             )
     
+    async def _try_fallbacks(
+        self,
+        original_error: Exception,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        max_tokens: int,
+        temperature: float,
+    ) -> LLMResponse:
+        """Try fallback models after a transient error on the primary model.
+
+        Receives the *raw* (pre-cache_control) messages/tools so that
+        cache_control is only injected when the fallback provider supports it.
+        """
+        for fb_model in self._fallbacks:
+            resolved = self._resolve_model(fb_model)
+            logger.warning("Primary model failed ({}), trying fallback: {}", original_error, fb_model)
+
+            fb_msgs, fb_tools = messages, tools
+            if self._supports_cache_control(fb_model):
+                fb_msgs, fb_tools = self._apply_cache_control(fb_msgs, fb_tools)
+
+            fb_kwargs: dict[str, Any] = {
+                "model": resolved,
+                "messages": self._sanitize_messages(self._sanitize_empty_content(fb_msgs)),
+                "max_tokens": max_tokens,
+                "temperature": temperature,
+            }
+            self._apply_model_overrides(resolved, fb_kwargs)
+
+            if fb_tools:
+                fb_kwargs["tools"] = fb_tools
+                fb_kwargs["tool_choice"] = "auto"
+
+            if self._fallback_providers:
+                for p_name, p_cfg in self._fallback_providers.items():
+                    if p_name == fb_model:
+                        if "api_base" in p_cfg:
+                            fb_kwargs["api_base"] = p_cfg["api_base"]
+                        if "api_key" in p_cfg:
+                            fb_kwargs["api_key"] = p_cfg["api_key"]
+
+            try:
+                response = await acompletion(**fb_kwargs)
+                logger.info("Fallback model {} succeeded", fb_model)
+                return self._parse_response(response)
+            except Exception as fb_err:
+                logger.warning("Fallback model {} also failed: {}", fb_model, fb_err)
+                continue
+
+        return LLMResponse(
+            content=f"All models failed. Primary error: {original_error}",
+            finish_reason="error",
+        )
+
     def _parse_response(self, response: Any) -> LLMResponse:
         """Parse LiteLLM response into our standard format."""
         choice = response.choices[0]

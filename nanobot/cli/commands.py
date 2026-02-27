@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+from re import M
 import signal
 from pathlib import Path
 import select
@@ -228,6 +229,24 @@ def _create_workspace_templates(workspace: Path):
 
     (workspace / "skills").mkdir(exist_ok=True)
 
+def _make_fallback_provider(config: Config):
+    fallbacks = config.agents.defaults.fallbacks    
+    fallback_providers ={}
+    
+    if not fallbacks:
+        return None
+
+    for model in fallbacks:
+        provider_name = config.get_provider_name(model)
+        if provider_name in ["openai_codex", "custom", "vllm", "github_copilot"]:
+            continue
+        p = config.get_provider(model)
+        fallback_providers[model] = {
+            "api_key": p.api_key if p else None,
+            "api_base": config.get_api_base(model) or None
+        }
+        
+    return fallback_providers    
 
 def _make_provider(config: Config):
     """Create the appropriate LLM provider from config."""
@@ -258,12 +277,17 @@ def _make_provider(config: Config):
         console.print("Set one in ~/.nanobot/config.json under providers section")
         raise typer.Exit(1)
 
+    fallbacks = config.agents.defaults.fallbacks    
+    fallback_providers = _make_fallback_provider(config)
+
     return LiteLLMProvider(
         api_key=p.api_key if p else None,
         api_base=config.get_api_base(model),
         default_model=model,
         extra_headers=p.extra_headers if p else None,
         provider_name=provider_name,
+        fallbacks=fallbacks,
+        fallback_providers=fallback_providers,
     )
 
 
